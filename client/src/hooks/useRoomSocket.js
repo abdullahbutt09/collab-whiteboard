@@ -23,6 +23,7 @@ export function useRoomSocket(roomId, handlers) {
     socket.on("SYNC_DELETE", handlers.onSyncDelete);
     socket.on("SYNC_CURSOR", handlers.onSyncCursor);
     socket.on("SYNC_CLEAR", handlers.onSyncClear);
+    socket.on("SYNC_SCENE", handlers.onSyncScene);
     socket.on("SYNC_CHAT_HISTORY", handlers.onSyncChatHistory);
     socket.on("SYNC_CHAT_MESSAGE", handlers.onSyncChatMessage);
 
@@ -34,6 +35,7 @@ export function useRoomSocket(roomId, handlers) {
       socket.off("SYNC_DELETE", handlers.onSyncDelete);
       socket.off("SYNC_CURSOR", handlers.onSyncCursor);
       socket.off("SYNC_CLEAR", handlers.onSyncClear);
+      socket.off("SYNC_SCENE", handlers.onSyncScene);
       socket.off("SYNC_CHAT_HISTORY", handlers.onSyncChatHistory);
       socket.off("SYNC_CHAT_MESSAGE", handlers.onSyncChatMessage);
       socket.disconnect();

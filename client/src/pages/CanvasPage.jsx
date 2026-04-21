@@ -4,7 +4,9 @@ import { WhiteboardCanvas } from "../canvas/WhiteboardCanvas";
 import { ChatPanel } from "../components/ChatPanel";
 import { CursorLayer } from "../components/CursorLayer";
 import { Toolbar } from "../components/Toolbar";
+import { VoiceControls } from "../components/VoiceControls";
 import { useRoomSocket } from "../hooks/useRoomSocket";
+import { useVoiceChat } from "../hooks/useVoiceChat";
 import { useBoardStore } from "../store/useBoardStore";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
@@ -20,9 +22,6 @@ export function CanvasPage() {
     elements,
     messages,
     cursors,
-    selectedTool,
-    color,
-    strokeWidth,
     setRoomId,
     setUsers,
     setMessages,
@@ -30,14 +29,10 @@ export function CanvasPage() {
     addMessage,
     removeUser,
     setCursor,
-    setSelectedTool,
-    setColor,
     setElements,
     addOrUpdateElement,
     deleteElement,
     clearElements,
-    undo,
-    redo,
   } = useBoardStore();
 
   useEffect(() => {
@@ -105,6 +100,11 @@ export function CanvasPage() {
       onSyncClear: () => {
         clearElements({ record: false });
       },
+      onSyncScene: ({ elements: incomingElements }) => {
+        if (Array.isArray(incomingElements)) {
+          setElements(incomingElements, { record: false });
+        }
+      },
       onSyncChatHistory: ({ messages: incomingMessages }) => {
         if (Array.isArray(incomingMessages)) {
           setMessages(incomingMessages);
@@ -121,22 +121,26 @@ export function CanvasPage() {
 
   useRoomSocket(roomId, handlers);
 
+  const {
+    joinVoice,
+    leaveVoice,
+    toggleMute,
+    isJoining,
+    isInVoice,
+    isMuted,
+    isSpeaking,
+    activeSpeakerIds,
+    participantCount,
+    remotePeers,
+    error: voiceError,
+  } = useVoiceChat({ roomId, socket, userId });
+
   async function handleSave() {
     await fetch(`${API_BASE}/canvas/save`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ roomId, elements }),
     });
-  }
-
-  function handleUndo() {
-    const next = undo();
-    socket?.emit("UNDO", { roomId, elements: next });
-  }
-
-  function handleRedo() {
-    const next = redo();
-    socket?.emit("REDO", { roomId, elements: next });
   }
 
   function handleClear() {
@@ -169,29 +173,33 @@ export function CanvasPage() {
         </div>
 
         <Toolbar
-          selectedTool={selectedTool}
-          setSelectedTool={setSelectedTool}
-          color={color}
-          setColor={setColor}
-          onUndo={handleUndo}
-          onRedo={handleRedo}
           onClear={handleClear}
           onSave={handleSave}
         />
+
+        <div className="mt-3">
+          <VoiceControls
+            isJoining={isJoining}
+            isInVoice={isInVoice}
+            isMuted={isMuted}
+            isSpeaking={isSpeaking}
+            activeSpeakerIds={activeSpeakerIds}
+            participantCount={participantCount}
+            onJoin={joinVoice}
+            onLeave={leaveVoice}
+            onToggleMute={toggleMute}
+            remotePeers={remotePeers}
+            error={voiceError}
+          />
+        </div>
 
         <div className="mt-3 flex flex-col gap-3 lg:flex-row">
           <div className="relative flex-1">
             <WhiteboardCanvas
               elements={elements}
               roomId={roomId}
-              selectedTool={selectedTool}
-              color={color}
-              strokeWidth={strokeWidth}
-              userId={userId}
               socket={socket}
-              addOrUpdateElement={addOrUpdateElement}
               setElements={setElements}
-              deleteElement={deleteElement}
             />
             <CursorLayer cursors={cursors} />
           </div>
