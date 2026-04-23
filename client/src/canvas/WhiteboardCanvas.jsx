@@ -1,28 +1,42 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import throttle from "lodash.throttle";
-import { createElement, updateDraftElement } from "../utils/elementFactory";
-import { drawElement, getElementAtPosition, translateElement } from "../utils/geometry";
+import { Excalidraw } from "@excalidraw/excalidraw";
+import "@excalidraw/excalidraw/index.css";
+
+function getSceneSignature(elements) {
+  return JSON.stringify(
+    elements.map((item) => [item.id, item.version, item.versionNonce, item.isDeleted ? 1 : 0])
+  );
+}
+
+function normalizeSceneElements(elements) {
+  if (!Array.isArray(elements)) {
+    return [];
+  }
+
+  // Skip legacy custom-shape data and keep only Excalidraw-like scene elements.
+  return elements.filter(
+    (item) =>
+      item &&
+      typeof item === "object" &&
+      typeof item.id === "string" &&
+      typeof item.type === "string" &&
+      typeof item.version === "number" &&
+      typeof item.versionNonce === "number"
+  );
+}
 
 export function WhiteboardCanvas({
   elements,
   roomId,
-  selectedTool,
-  color,
-  strokeWidth,
-  userId,
   socket,
-  addOrUpdateElement,
   setElements,
-  deleteElement,
 }) {
-  const containerRef = useRef(null);
-  const canvasRef = useRef(null);
+  const excalidrawApiRef = useRef(null);
+  const lastLocalSignatureRef = useRef("");
+  const appliedRemoteSignatureRef = useRef("");
 
-  const [draftElement, setDraftElement] = useState(null);
-  const [movingElementId, setMovingElementId] = useState(null);
-  const [lastPointer, setLastPointer] = useState(null);
-
-  const throttledCursor = useMemo(
+  const emitCursor = useMemo(
     () =>
       throttle((x, y) => {
         if (!socket) {
@@ -37,137 +51,78 @@ export function WhiteboardCanvas({
     [roomId, socket]
   );
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
+  const emitSceneChange = useMemo(
+    () =>
+      throttle((nextElements) => {
+        if (!socket || !roomId) {
+          return;
+        }
 
-    if (!canvas || !container) {
-      return;
-    }
-
-    const ratio = window.devicePixelRatio || 1;
-    canvas.width = container.clientWidth * ratio;
-    canvas.height = container.clientHeight * ratio;
-
-    const ctx = canvas.getContext("2d");
-    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-    ctx.clearRect(0, 0, container.clientWidth, container.clientHeight);
-
-    elements.forEach((element) => drawElement(ctx, element));
-
-    if (draftElement) {
-      drawElement(ctx, draftElement);
-    }
-  }, [draftElement, elements]);
+        socket.emit("SCENE_CHANGE", { roomId, elements: nextElements });
+      }, 120),
+    [roomId, socket]
+  );
 
   useEffect(() => {
     return () => {
-      throttledCursor.cancel();
+      emitCursor.cancel();
+      emitSceneChange.cancel();
     };
-  }, [throttledCursor]);
+  }, [emitCursor, emitSceneChange]);
 
-  function getCoordinates(event) {
-    const rect = canvasRef.current.getBoundingClientRect();
-    return {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    };
+  useEffect(() => {
+    const api = excalidrawApiRef.current;
+    if (!api) {
+      return;
+    }
+
+    const normalized = normalizeSceneElements(elements);
+    const incomingSignature = getSceneSignature(normalized);
+
+    if (incomingSignature === lastLocalSignatureRef.current) {
+      return;
+    }
+
+    appliedRemoteSignatureRef.current = incomingSignature;
+    api.updateScene({ elements: normalized });
+  }, [elements]);
+
+  function handleChange(nextElements) {
+    const normalized = normalizeSceneElements(nextElements);
+    const signature = getSceneSignature(normalized);
+
+    if (signature === appliedRemoteSignatureRef.current) {
+      return;
+    }
+
+    if (signature === lastLocalSignatureRef.current) {
+      return;
+    }
+
+    lastLocalSignatureRef.current = signature;
+    setElements(normalized, { record: false });
+    emitSceneChange(normalized);
   }
 
-  function handlePointerDown(event) {
-    const { x, y } = getCoordinates(event);
+  function handlePointerUpdate(pointerPayload) {
+    const pointer = pointerPayload?.pointer || pointerPayload;
 
-    if (selectedTool === "eraser") {
-      const found = getElementAtPosition(elements, x, y);
-      if (!found) {
-        return;
-      }
-
-      deleteElement(found.id);
-      socket?.emit("DELETE_ELEMENT", { roomId, elementId: found.id });
+    if (!pointer || typeof pointer.x !== "number" || typeof pointer.y !== "number") {
       return;
     }
 
-    if (selectedTool === "select") {
-      const found = getElementAtPosition(elements, x, y);
-      if (!found) {
-        return;
-      }
-
-      setMovingElementId(found.id);
-      setLastPointer({ x, y });
-      return;
-    }
-
-    const nextDraft = createElement({
-      tool: selectedTool,
-      startX: x,
-      startY: y,
-      x,
-      y,
-      color,
-      strokeWidth,
-      userId,
-    });
-
-    setDraftElement(nextDraft);
-  }
-
-  function handlePointerMove(event) {
-    const { x, y } = getCoordinates(event);
-    throttledCursor(x, y);
-
-    if (movingElementId && lastPointer) {
-      const dx = x - lastPointer.x;
-      const dy = y - lastPointer.y;
-
-      const nextElements = elements.map((element) =>
-        element.id === movingElementId ? translateElement(element, dx, dy) : element
-      );
-
-      setElements(nextElements, { record: false });
-      setLastPointer({ x, y });
-      return;
-    }
-
-    if (!draftElement) {
-      return;
-    }
-
-    setDraftElement((current) => updateDraftElement(current, x, y));
-  }
-
-  function handlePointerUp() {
-    if (movingElementId) {
-      const movedElement = elements.find((element) => element.id === movingElementId);
-      if (movedElement) {
-        setElements(elements, { record: true });
-        socket?.emit("UPDATE_ELEMENT", { roomId, element: movedElement });
-      }
-
-      setMovingElementId(null);
-      setLastPointer(null);
-      return;
-    }
-
-    if (!draftElement) {
-      return;
-    }
-
-    addOrUpdateElement(draftElement);
-    socket?.emit("DRAW", { roomId, element: draftElement });
-    setDraftElement(null);
+    emitCursor(pointer.x, pointer.y);
   }
 
   return (
-    <div ref={containerRef} className="relative h-[calc(100vh-180px)] w-full overflow-hidden rounded-2xl border border-zinc-700/30 bg-white">
-      <canvas
-        ref={canvasRef}
-        className="h-full w-full touch-none"
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerUp}
+    <div className="relative h-[calc(100vh-180px)] w-full overflow-hidden rounded-2xl border border-zinc-700/30 bg-white">
+      <Excalidraw
+        excalidrawAPI={(api) => {
+          excalidrawApiRef.current = api;
+        }}
+        initialData={{ elements: normalizeSceneElements(elements) }}
+        onChange={handleChange}
+        onPointerUpdate={handlePointerUpdate}
       />
     </div>
   );
