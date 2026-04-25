@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { WhiteboardCanvas } from "../canvas/WhiteboardCanvas";
 import { ChatPanel } from "../components/ChatPanel";
@@ -14,6 +14,7 @@ const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 export function CanvasPage() {
   const { roomId } = useParams();
   const navigate = useNavigate();
+  const [copyState, setCopyState] = useState("idle");
 
   const {
     userId,
@@ -160,6 +161,31 @@ export function CanvasPage() {
     });
   }
 
+  async function handleCopyRoomCode() {
+    if (!roomId) {
+      return;
+    }
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(roomId);
+      } else {
+        const input = document.createElement("input");
+        input.value = roomId;
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand("copy");
+        document.body.removeChild(input);
+      }
+
+      setCopyState("copied");
+      window.setTimeout(() => setCopyState("idle"), 1400);
+    } catch {
+      setCopyState("error");
+      window.setTimeout(() => setCopyState("idle"), 1800);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-zinc-900 px-3 py-3 md:px-6 md:py-6">
       <section className="mx-auto max-w-[1400px]">
@@ -169,6 +195,13 @@ export function CanvasPage() {
             <span className="rounded bg-zinc-800 px-2 py-1">Room: {roomId}</span>
             <span className="rounded bg-zinc-800 px-2 py-1">Users: {users.length + 1}</span>
             <span className="rounded bg-zinc-800 px-2 py-1">You: {userId}</span>
+            <button
+              type="button"
+              onClick={handleCopyRoomCode}
+              className="rounded bg-sky-500 px-2 py-1 text-zinc-900 hover:bg-sky-400"
+            >
+              {copyState === "copied" ? "Copied" : copyState === "error" ? "Copy failed" : "Copy Room Code"}
+            </button>
           </div>
         </div>
 
